@@ -14,39 +14,63 @@ let db = admin.firestore();
 let config = require('./env.json');
 if (Object.keys(functions.config()).length) config = functions.config();
 
+const start_message = `ברוך הבא עבד צעיר!\nהגעת לבוט התורנויות של הקליניקה, הלא היא דירה 2, בן יהודה 48 א׳, תל אביב-יפו`;
+
+async function handleStart(ctx) {
+  let senderId = ctx.from.id.toString();
+  let userDocRef = db.collection('users').doc(senderId);
+
+  try {
+    await userDocRef.set({
+      chatId: ctx.chat.id,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+    });
+  } catch (err) {
+    return console.log('failed to register user in the database, ' + err);
+  }
+
+  ctx.reply(start_message);
+  return undefined;
+}
+
 async function handleMesimot(ctx) {
   let tasksRef = db.collection('mesimot')
 
+  let tasksSnapshot;
   try {
-    let tasksSnapshot = await tasksRef.get();
-    let tasks = tasksSnapshot.docs.map(docSnapshot => docSnapshot.data());
-    let sortedTasks = tasks.sort((taskA, taskB) => taskA.id > taskB.id);
-    let taskDescriptionArr = sortedTasks.map(task => `(${task.id}) ${task.name}`);
-    let replyMsgStr = taskDescriptionArr.join('\n');
-
-    ctx.reply(replyMsgStr);
-    return undefined;
+    tasksSnapshot = await tasksRef.get();
   } catch (err) {
     return console.log('failed to get tasks from database, ' + err);
   }
+
+  let tasks = tasksSnapshot.docs.map(docSnapshot => docSnapshot.data());
+  let sortedTasks = tasks.sort((taskA, taskB) => taskA.id > taskB.id);
+  let taskDescriptionArr = sortedTasks.map(task => `(${task.id}) ${task.name}`);
+  let replyMsgStr = taskDescriptionArr.join('\n');
+
+  ctx.reply(replyMsgStr);
+  return undefined;
 }
 
 async function handleAni(ctx) {
   let senderId = ctx.from.id.toString();
   let userRef = db.collection('users').doc(senderId);
 
+  let userSnapshot;
   try {
-    let userSnapshot = await userRef.get();
-    if (!userSnapshot.exists) return console.log('failed to find a user with the supplied identifier');
-    let user = userSnapshot.data();
-    let userName = user.displayName || user.firstName;
-    let replyMsgStr = `שם התצוגה שלך הוא *${userName}*`;
-  
-    ctx.reply(replyMsgStr, Extra.markup().markdown());
-    return undefined;
+    userSnapshot = await userRef.get();
   } catch (err) {
     return console.log(`failed to get user with identifier ${ctx.from.id} from database`);
   }
+
+  if (!userSnapshot.exists) return console.log('failed to find a user with the supplied identifier');
+  let user = userSnapshot.data();
+  let userName = user.displayName || user.firstName;
+  let replyMsgStr = `שם התצוגה שלך הוא *${userName}*`;
+
+  ctx.reply(replyMsgStr, Extra.markup().markdown());
+  return undefined;
 }
 
 async function handleShem(ctx) {
@@ -62,24 +86,32 @@ async function handleShem(ctx) {
   let senderId = ctx.from.id.toString();
   let userRef = db.collection('users').doc(senderId);
 
+  let userSnapshot;
   try {
-    let userSnapshot = await userRef.get();
-    if (!userSnapshot.exists) return console.log(`failed to find user with identifier ${senderId}`);
-    let user = userSnapshot.data();
-    user.displayName = newName;
-    await userRef.set(user);
-    ctx.reply(`השם שלך שונה בהצלחה ל-*${newName}*`, Extra.markup().markdown());
-    return undefined;
+    userSnapshot = await userRef.get();
   } catch (err) {
     return console.log('failed to update the user\'s name, ' + err);
   }
+
+  if (!userSnapshot.exists) return console.log(`failed to find user with identifier ${senderId}`);
+  let user = userSnapshot.data();
+  user.displayName = newName;
+
+  try {
+    await userRef.set(user);
+  } catch (err) {
+    return console.log(`failed to update the user's name, ${err}`);
+  }
+
+  ctx.reply(`השם שלך שונה בהצלחה ל-*${newName}*`, Extra.markup().markdown());
+  return undefined;
 }
 
 async function handleAvadim(ctx) {
   let msgText = ctx.message.text;
   let msgParts = msgText.split(' ');
   let taskId = parseInt(msgParts[1]);
-  
+
   if (taskId === undefined || isNaN(taskId)) {
     ctx.reply('יש לצרף מספר משימה, כדי לראות את המשימות הזמינות הקלד /mesimot');
     return console.log('failed to get the tasks identifier');
@@ -111,7 +143,7 @@ async function handleAvadim(ctx) {
   } catch (err) {
     return console.log(`failed to get assignees from database, ${err}`);
   }
-  
+
   assigneeDocSnapshots = assigneeDocSnapshots.filter(docSnapshot => docSnapshot.exists);
   let assignees = assigneeDocSnapshots.map(docSnapshot => docSnapshot.data());
   let assigneeDescArr = assignees.map(assignee => `👷🏻‍♂️ ${assignee.displayName || assignee.firstName}`);
@@ -121,9 +153,9 @@ async function handleAvadim(ctx) {
   return undefined;
 }
 
-const bot = new Telegraf(config.service.telegram_bot_token)
+const bot = new Telegraf(config.service.telegram_bot_token);
 
-bot.start((ctx) => ctx.reply('got it!'));
+bot.start(async (ctx) => await handleStart(ctx));
 bot.command('mesimot', async (ctx) => await handleMesimot(ctx));
 bot.command('ani', async (ctx) => await handleAni(ctx));
 bot.command('shem', async (ctx) => await handleShem(ctx));
@@ -135,7 +167,7 @@ exports.botHandler = functions.https.onRequest(async (req, res) => {
     if (!res.writableEnded) {
       res.end();
     }
-  } catch(err) {
+  } catch (err) {
     res.status(500).send('something went wrong');
   }
 });
